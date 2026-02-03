@@ -1,17 +1,26 @@
-cmake_minimum_required(VERSION 3.18)
-project(MPC)
+cmake_minimum_required(VERSION 3.10)
+project(MPCLongitudinalLateral)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_subdirectory(eigen-3.4.0)
-add_subdirectory(osqp-eigen)
-add_subdirectory(osqp)
+# Trova le librerie necessarie
+find_package(Eigen3 REQUIRED)
+find_package(OsqpEigen REQUIRED) # Questo include anche OSQP solitamente
 
-add_executable(${PROJECT_NAME}
-    main.cpp
-    MPC.cpp
-    MPC.hpp
+# Include directories
+include_directories(
+    ${EIGEN3_INCLUDE_DIR}
+    ${OSQP_EIGEN_INCLUDE_DIRS}
+    . 
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE osqp::osqp Eigen3::Eigen OsqpEigen)
+# Crea l'eseguibile di test
+# Uniamo tutti i file sorgente
+add_executable(test_mpc main.cpp MPC.cpp)
+
+# Linka le librerie all'eseguibile
+target_link_libraries(test_mpc
+    OsqpEigen::OsqpEigen
+    Eigen3::Eigen
+)
