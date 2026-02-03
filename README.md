@@ -2,7 +2,7 @@
 UNIFI Bachelor's degree Thesis Work: Extended MPC for Formula Student Autonomous System
 
 ## Introduction
-This project extends the control architecture of the Firenze Race Team driverless vehicle. It implements a **Coupled Linear Time-Varying Model Predictive Control (LTV-MPC)** algorithm capable of handling both lateral dynamics (steering) and longitudinal dynamics (traction/braking) simultaneously.
+This project extends the control architecture of the Firenze Race Team driverless vehicle. It implements a **Linear Time-Varying Model Predictive Control (LTV-MPC)** algorithm capable of handling both lateral dynamics (steering) and longitudinal dynamics (traction/braking) simultaneously.
 
 Unlike the previous version, which treated velocity as a constant parameter, this controller optimizes the vehicle's speed profile to maximize performance while respecting the **electric powertrain power constraints** ($P_{max} = 80 kW$) and tire friction limits.
 
@@ -69,4 +69,5 @@ Run the test executable:
 
 ## Credits
 
-Based on the Bachelor's Thesis work by Federico Monetti (Lateral Control). Extended by Samuel Bruno (Longitudinal & Lateral Control for EV).
+Based on the Bachelor's Thesis work by Federico Monetti (Lateral Control). Extended by Samuel Bruno (Longitudinal Control for EV).
+
