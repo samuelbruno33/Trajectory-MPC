@@ -1,34 +1,71 @@
-# Linear MPC for Steering Control
-UNIFI Bachelor's degree Thesis Work: MPC for Formula Student Autonomous System
+# Coupled Longitudinal & Lateral MPC for EV
+UNIFI Master's degree Thesis Work: Extended MPC for Formula Student Autonomous System
 
 ## Introduction
-This project implements a Model Predictive Control (MPC) algorithm for the steering control of an autonomous Formula Student Driverless vehicle. It uses a linearized bicycle model (LTV) and solves a quadratic programming (QP) problem at each time step to track a reference trajectory while respecting physical constraints.
+This project extends the control architecture of the Firenze Race Team driverless vehicle. It implements a **Coupled Linear Time-Varying Model Predictive Control (LTV-MPC)** algorithm capable of handling both lateral dynamics (steering) and longitudinal dynamics (traction/braking) simultaneously.
+
+Unlike the previous version, which treated velocity as a constant parameter, this controller optimizes the vehicle's speed profile to maximize performance while respecting the **electric powertrain power constraints** ($P_{max} = 80 kW$) and tire friction limits.
+
 ## Formulation
-This MPC try to follow a predefined reference path using a bycicle linear time-varying model, with linear Pacejka Magic Formula, with the following state equations:
-<br>
-<img width="587" height="240" alt="{FC57B790-AE6C-419E-93FD-FF908BCBAC55}" src="https://github.com/user-attachments/assets/d530a143-2f2b-4f75-8411-4b9079c3ce39" />
-<br>
-in which, at every time step, the values of Vlon, θ and Ki(cornering stiffness) are updated. The values of Vlon and θ are respectively read from wheels sensors, and SLAM algorithm, instead the Ki values are read from a lookup table hat correlates vertical load on the wheel to cornering stiffness.<br>
-The state of the problem are given as follows:
-<br>
-<img width="138" height="244" alt="{473A1425-9143-4F33-ABE1-4BE50D7982B1}" src="https://github.com/user-attachments/assets/c6f4b0ed-a0e7-418d-b091-fd7e4dde365e" />
-<br>
-<br>
-<br>
-The cost function, to formulate the linear optimization problem, is as follow:
-<br>
-<img width="725" height="308" alt="{185A0332-64B5-4987-911D-9C9ADD9F09C6}" src="https://github.com/user-attachments/assets/206c29c9-fce2-4e33-b89e-f417b45298de" />
-<br>
-Where are applied some constraint on δ(steering angle), position X and Y.
+The controller uses a dynamic bicycle model formulated in Cartesian coordinates to preserve linearity with respect to control inputs. The model is linearized at each time step around the current operating point.
+
+### State Space
+The state vector $x$ consists of 6 variables:
+$$x = [X, Y, \theta, v_x, v_y, \omega]^T$$
+Where:
+* $X, Y$: Global position
+* $\theta$: Yaw angle
+* $v_x$: Longitudinal velocity (Controlled state)
+* $v_y$: Lateral velocity
+* $\omega$: Yaw rate
+
+### Control Inputs
+The control vector $u$ consists of 2 inputs:
+$$u = [F_x, \delta]^T$$
+Where:
+* $F_x$: Longitudinal Force (Traction positive, Braking negative)
+* $\delta$: Steering angle
+
+### Constraints
+The optimization problem respects hard constraints on actuators and dynamic constraints on power:
+1.  **Steering limits:** $\delta \in [\delta_{min}, \delta_{max}]$
+2.  **Actuator Slew Rate:** Limited $\Delta F_x$ and $\Delta \delta$ to ensure smooth control and mechanical integrity.
+3.  **Dynamic Power Limit:** The maximum tractive force is bounded by the engine power map:
+    $$F_{x,max} = \min(F_{peak}, \frac{P_{max}}{v_x})$$
 
 ## Dependencies
-This MPC works with the following libraries:
-- OSQP (linear optimization problem solver)
-- Eigen (for linear algebra data stuctures)
-- Eigen-osqp (wrapper for eigen and osqp functions)
+This project relies on the following C++ libraries:
+* **Eigen3**: For high-performance linear algebra operations.
+* **OSQP**: For solving the quadratic programming (QP) optimization problem.
+* **osqp-eigen**: A C++ wrapper to interface Eigen with OSQP.
 
-## Example on how it works
-You can find how it works on Formula Student Driverless Simulator ("https://fs-driverless.github.io/Formula-Student-Driverless-Simulator/v2.2.0") at the followinf link:
+### Installation (Windows Testing)
+Dependencies are managed via **vcpkg**. To set up the environment:
 
-https://drive.google.com/file/d/1tgMXG8vKku1ddpA6ZOAc_11E_MhwHgCW/view?usp=drive_link
+1.  Clone vcpkg (if not already present):
+    ```powershell
+    git clone [https://github.com/microsoft/vcpkg.git](https://github.com/microsoft/vcpkg.git)
+    .\vcpkg\bootstrap-vcpkg.bat
+    ```
+2.  Install libraries:
+    ```powershell
+    .\vcpkg\vcpkg install eigen3 osqp osqp-eigen
+    ```
 
+## Build & Run
+To compile the standalone test on Windows using CMake:
+
+```powershell
+mkdir build
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=[PATH_TO_VCPKG]/scripts/buildsystems/vcpkg.cmake
+cmake --build .
+```
+
+Run the test executable:
+```powershell
+.\Debug\test_mpc.exe
+```
+
+## Credits
+Based on the Bachelor's Thesis work by Federico Monetti (Lateral Control). Extended by Samuel Bruno (Longitudinal & Lateral Control for EV).

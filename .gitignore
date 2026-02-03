@@ -1,4 +1,5 @@
 /.idea/
+mpc_dependencies/
 eigen-3.4.0/
 osqp/
 osqp-eigen/
