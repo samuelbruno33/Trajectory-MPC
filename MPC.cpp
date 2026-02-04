@@ -10,11 +10,8 @@ MPC::MPC() : solver_initialized(false) {
     
     // Q: Matrice dei pesi sugli stati [X, Y, Theta, Vx, Vy, Omega]
     Q = Eigen::MatrixXd::Zero(nx, nx);
-    // Tuning preliminare:
-    // - Vx: peso alto (50) per garantire il tracking della velocità
-    // - Y: peso medio (20) per minimizzare l'errore laterale
-    // - Vy: peso per la stabilità (10)
-    Q.diagonal() << 20, 20, 10, 50, 10, 1; 
+    // Tuning preliminare
+    Q.diagonal() << 20, 20, 50, 50, 20, 1;
 
     // R: Matrice dei pesi sugli input [Fx, Delta]
     R = Eigen::MatrixXd::Identity(nu, nu);
@@ -186,12 +183,18 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
     Eigen::VectorXd x_ref_big = Eigen::VectorXd::Zero(op * nx);
     for (int i = 0; i < op; ++i) {
         int idx = std::min(i, (int)waypoints.size() - 1);
-        x_ref_big(i * nx + IDX_X) = waypoints[idx].x;
-        x_ref_big(i * nx + IDX_Y) = waypoints[idx].y;
-        // theta ref approssimato o calcolato dalla geometria waypoints (qui 0 o interpolato)
-        x_ref_big(i * nx + IDX_VX) = v_ref; // Tracking Velocità Fondamentale
-        // Vy e Omega rif = 0 (per stabilità)
+
+        x_ref_big(i * nx + IDX_X)  = waypoints[idx].x;
+        x_ref_big(i * nx + IDX_Y)  = waypoints[idx].y;
+        x_ref_big(i * nx + IDX_VX) = v_ref;
+
+        if (idx < waypoints.size() - 1) {
+            double dx = waypoints[idx + 1].x - waypoints[idx].x;
+            double dy = waypoints[idx + 1].y - waypoints[idx].y;
+            x_ref_big(i * nx + IDX_THETA) = atan2(dy, dx);
+        }
     }
+
 
     // 5. Costruzione Problema QP: 1/2 U'HU + q'U
     // H = Su'QSu + R + D'RdD
@@ -246,6 +249,13 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         // Delta bounds (Statici)
         lb_total(i*nu + IDX_DELTA) = umin[IDX_DELTA];
         ub_total(i*nu + IDX_DELTA) = umax[IDX_DELTA];
+
+        if (lb_total(i*nu + IDX_FX) > ub_total(i*nu + IDX_FX)) {
+             // Scambia o equalizza se c'è un errore numerico
+             double temp = lb_total(i*nu + IDX_FX);
+             lb_total(i*nu + IDX_FX) = ub_total(i*nu + IDX_FX);
+             ub_total(i*nu + IDX_FX) = temp;
+        }
     }
 
     // b. Vincoli Slew Rate (Delta U constraints)
@@ -287,7 +297,7 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         }
         solver_initialized = true;
     } else {
-        if (!solver.updateHessianMatrix(H_s)) return {0.0, 0.0};
+        //if (!solver.updateHessianMatrix(H_s)) return {0.0, 0.0};
         if (!solver.updateGradient(q)) return {0.0, 0.0};
         if (!solver.updateBounds(lb_total, ub_total)) return {0.0, 0.0};
     }

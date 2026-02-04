@@ -8,35 +8,24 @@
 
 using namespace std;
 
-// ==========================================
-// 1. STRUTTURE E UTILS
-// ==========================================
-struct State {
-    double x, y, theta, vx, vy, omega;
-};
-
+// --- UTILS ---
 double normalize_angle(double angle) {
     while (angle > M_PI) angle -= 2.0 * M_PI;
     while (angle < -M_PI) angle += 2.0 * M_PI;
     return angle;
 }
 
-// ==========================================
-// 2. MODELLO VEICOLO (PLANT)
-// ==========================================
+// --- PLANT (Modello Fisico Reale) ---
+struct State { double x, y, theta, vx, vy, omega; };
+
 State update_vehicle_physics(State s, double Fx, double delta, double dt) {
-    double m = 320.0;
-    double Iz = 98.03;
-    double la = 0.792;
-    double lb = 0.758;
+    double m = 320.0; double Iz = 98.03; double la = 0.792; double lb = 0.758;
     double B = 10.0, C = 1.9, D = 1.0; 
 
-    // Saturazione Attuatori
-    if (Fx > 1500) Fx = 1500;
-    if (Fx < -1500) Fx = -1500;
-    double max_steer = 24.0 * M_PI / 180.0;
-    if (delta > max_steer) delta = max_steer;
-    if (delta < -max_steer) delta = -max_steer;
+    // Limiti Fisici Reali
+    if (Fx > 1500) Fx = 1500; if (Fx < -1500) Fx = -1500;
+    double max_steer = 0.42; // 24 gradi
+    if (delta > max_steer) delta = max_steer; if (delta < -max_steer) delta = -max_steer;
 
     double vx_safe = std::max(s.vx, 1.0);
     double alpha_f = delta - atan2(s.vy + s.omega * la, vx_safe);
@@ -49,188 +38,194 @@ State update_vehicle_physics(State s, double Fx, double delta, double dt) {
     double dot_vy = (Fyf * cos(delta) + Fyr) / m - s.vx * s.omega;
     double dot_omega = (la * Fyf * cos(delta) - lb * Fyr) / Iz;
 
-    State next_s = s;
-    next_s.vx += dot_vx * dt;
-    next_s.vy += dot_vy * dt;
-    next_s.omega += dot_omega * dt;
-    
-    next_s.x += (s.vx * cos(s.theta) - s.vy * sin(s.theta)) * dt;
-    next_s.y += (s.vx * sin(s.theta) + s.vy * cos(s.theta)) * dt;
-    next_s.theta = normalize_angle(s.theta + s.omega * dt);
-
-    return next_s;
+    State next = s;
+    next.vx += dot_vx * dt; next.vy += dot_vy * dt; next.omega += dot_omega * dt;
+    next.x += (s.vx * cos(s.theta) - s.vy * sin(s.theta)) * dt;
+    next.y += (s.vx * sin(s.theta) + s.vy * cos(s.theta)) * dt;
+    next.theta = normalize_angle(s.theta + s.omega * dt);
+    return next;
 }
 
-// ==========================================
-// 3. TRACK GENERATION (Rettilineo -> Sinusoide -> Rettilineo)
-// ==========================================
-struct TrackPoint {
-    double x, y;
-    double target_v; 
-};
+// --- TRACK GENERATION (Chicane: Dritto -> SX -> DX -> Dritto) ---
+struct TrackPoint { double x, y, v_target; };
 
 vector<TrackPoint> generate_track() {
-    vector<TrackPoint> track;
-    double ds = 0.5; 
+    vector<TrackPoint> t;
+    double ds = 0.5; // Risoluzione punti
 
-    // A. Primo Rettilineo (0 -> 100m) - ACCELERAZIONE
-    for (double x = 0; x < 100.0; x += ds) {
-        track.push_back({x, 0.0, 25.0}); // Target 90 km/h
+    // 1. Primo Rettilineo (0 -> 80m) - ACCELERAZIONE
+    for (double x = 0; x < 80.0; x += ds) {
+        t.push_back({x, 0.0, 25.0}); // Target 90 km/h
     }
 
-    // B. Sinusoide (100 -> 200m) - GUIDATO LENTO
-    // Ampiezza 4m, Frequenza adatta a FS
-    for (double x = 100.0; x < 200.0; x += ds) {
-        double y = 4.0 * sin((x - 100.0) / 15.0); 
-        track.push_back({x, y, 12.0}); // Frenata a 43 km/h
+    // 2. Curva a Sinistra (80 -> 120m)
+    // Usiamo un arco di cerchio o una coseno per fare la chicane
+    // Spostamento laterale verso Y positivo (+4m)
+    for (double x = 80.0; x < 120.0; x += ds) {
+        double progress = (x - 80.0) / 40.0; // 0 to 1
+        double y = 2.0 * (1.0 - cos(progress * M_PI)); // 0 -> 4m
+        t.push_back({x, y, 12.0}); // Frenata a 43 km/h
     }
 
-    // C. Secondo Rettilineo (200 -> 300m) - RI-ACCELERAZIONE
-    for (double x = 200.0; x <= 300.0; x += ds) {
-        track.push_back({x, 0.0, 25.0}); 
+    // 3. Curva a Destra (120 -> 160m)
+    // Ritorno a Y=0
+    for (double x = 120.0; x < 160.0; x += ds) {
+        double progress = (x - 120.0) / 40.0;
+        double y = 4.0 - 2.0 * (1.0 - cos(progress * M_PI)); // 4m -> 0m
+        t.push_back({x, y, 12.0}); // Mantieni bassa velocità
+    }
+
+    // 4. Secondo Rettilineo (160 -> 300m) - RI-ACCELERAZIONE
+    for (double x = 160.0; x <= 300.0; x += ds) {
+        t.push_back({x, 0.0, 25.0}); 
     }
     
-    return track;
+    return t;
 }
 
-// Helper: Estrai orizzonte e riferimento velocità
-pair<vector<Point>, double> get_local_horizon(State s, const vector<TrackPoint>& full_track, int horizon_len) {
-    double min_dist = 1e9;
-    int idx = 0;
+pair<vector<Point>, double> get_horizon(State s, const vector<TrackPoint>& track, int op) {
+    double min_d = 1e9; int idx = 0;
+    for(int i=0; i<track.size(); i++) {
+        double d = sqrt(pow(s.x - track[i].x, 2) + pow(s.y - track[i].y, 2));
+        if(d < min_d) { min_d = d; idx = i; }
+    }
     
-    // Cerca il punto più vicino (Greedy search ottimizzata localmente si potrebbe fare, qui full scan)
-    for (int i = 0; i < full_track.size(); i++) {
-        double d = sqrt(pow(s.x - full_track[i].x, 2) + pow(s.y - full_track[i].y, 2));
-        if (d < min_dist) { min_dist = d; idx = i; }
+    vector<Point> wp;
+    // Lookahead velocità intelligente: guarda 20 passi avanti per frenare in tempo
+    int v_idx = std::min(idx + 30, (int)track.size()-1); 
+    double v_ref = track[v_idx].v_target;
+
+    for(int i=0; i<op; i++) {
+        int ii = std::min(idx+i, (int)track.size()-1);
+        wp.push_back(Point(track[ii].x, track[ii].y));
     }
-
-    vector<Point> local_wp;
-    // Riferimento velocità: prendiamo quello tra 1 secondo (circa 20m avanti) per anticipare la frenata
-    // Se prendiamo quello attuale, frena troppo tardi!
-    int lookahead_v_idx = std::min(idx + 15, (int)full_track.size() - 1);
-    double target_v = full_track[lookahead_v_idx].target_v;
-
-    for (int i = 0; i < horizon_len; i++) {
-        int curr_idx = std::min(idx + i, (int)full_track.size() - 1);
-        local_wp.push_back(Point(full_track[curr_idx].x, full_track[curr_idx].y));
-    }
-
-    return {local_wp, target_v};
+    return {wp, v_ref};
 }
 
-// ==========================================
-// 4. CONTROLLORI PID
-// ==========================================
+// --- CONTROLLORI PID ---
 class PID {
-    double kp, ki, kd, integral=0, prev_err=0, limit;
+    double kp, ki, kd, I=0, prev=0, limit;
 public:
     PID(double p, double i, double d, double lim) : kp(p), ki(i), kd(d), limit(lim) {}
-    double update(double target, double current, double dt) {
-        double err = target - current;
-        integral += err * dt;
-        double deriv = (err - prev_err) / dt;
-        prev_err = err;
-        
-        // Anti-windup
-        if(integral > 500) integral = 500; 
-        if(integral < -500) integral = -500;
-
-        double out = kp*err + ki*integral + kd*deriv;
+    double calc(double ref, double meas, double dt) {
+        double err = ref - meas;
+        I += err*dt;
+        if(I > 500) I=500; if(I<-500) I=-500; 
+        double der = (err - prev)/dt;
+        prev = err;
+        double out = kp*err + ki*I + kd*der;
         return std::max(-limit, std::min(out, limit));
     }
-    void reset() { integral = 0; prev_err = 0; }
+    void reset() { I=0; prev=0; }
 };
 
 class PurePursuit {
 public:
-    double compute(State s, const vector<Point>& horizon) {
-        double ld = 4.0; 
-        for(auto& p : horizon) {
-            double d = sqrt(pow(p.x - s.x, 2) + pow(p.y - s.y, 2));
-            if(d > ld) {
-                double alpha = atan2(p.y - s.y, p.x - s.x) - s.theta;
-                return atan(2 * 1.55 * sin(alpha) / ld);
+    double calc(State s, const vector<Point>& path) {
+        // Lookahead meno aggressivo e più realistico
+        double ld = std::clamp(0.5 * s.vx + 1.5, 2.5, 10.0);
+
+        // Guadagno di sterzo ridotto (simula limiti fisici / understeer)
+        const double wheelbase = 1.55;
+        const double steer_gain = 0.85;
+
+        for (size_t i = 0; i < path.size(); ++i) {
+            double dx = path[i].x - s.x;
+            double dy = path[i].y - s.y;
+            double dist = std::hypot(dx, dy);
+
+            if (dist > ld) {
+                double alpha = atan2(dy, dx) - s.theta;
+                alpha = normalize_angle(alpha);
+
+                double delta = atan2(2.0 * wheelbase * sin(alpha), ld);
+                return steer_gain * delta;
             }
         }
         return 0.0;
     }
 };
 
-// ==========================================
-// 5. MAIN
-// ==========================================
+
+// --- MAIN ---
 int main() {
+    // Check Critico
     ifstream check("cornering_stiffness_vs_vertical_load.txt");
-    if(!check.good()) cerr << "WARNING: File stiffness mancante!" << endl;
+    if(!check.good()) {
+        cerr << "ERRORE: File 'cornering_stiffness_vs_vertical_load.txt' NON TROVATO!" << endl;
+        cerr << "Assicurati che sia nella cartella build/Debug o build/" << endl;
+        return -1;
+    }
 
     auto track = generate_track();
+    int op = 40; 
     double dt = 0.05;
-    double sim_time = 20.0; // Tempo sufficiente per fare 300m
-    int steps = sim_time / dt;
+    int steps = 500; // 25 secondi
 
-    MPC mpc;
-    // PID Tuning aggressivo per mostrare overshoot e violazioni
-    PID pid_throttle(400, 2, 10, 1500); 
-    PID pid_brake(600, 0, 20, 1500);
+    MPC mpc; 
+    State s_mpc = {0,0,0, 1.0, 0,0};
+    
+    PID pid_gas(400, 5, 20, 1500); 
+    PID pid_brk(600, 0, 50, 1500);
     PurePursuit pp;
-
-    State s_mpc = {0,0,0, 1.0, 0,0}; 
     State s_pid = {0,0,0, 1.0, 0,0};
 
-    ofstream file("comparison_results.csv");
-    file << "Time,Ref_Vx,MPC_X,MPC_Y,MPC_Vx,MPC_Fx,MPC_Steer,MPC_LatErr,PID_X,PID_Y,PID_Vx,PID_Fx,PID_Power\n";
+    ofstream f("comparison_results.csv");
+    // Salviamo anche le coordinate di riferimento (Ref_X, Ref_Y) per il plot preciso
+    f << "Time,Ref_Vx,Ref_X,Ref_Y,MPC_X,MPC_Y,MPC_Vx,MPC_Fx,MPC_Steer,PID_X,PID_Y,PID_Vx,PID_Fx,PID_Power\n";
 
-    cout << "Avvio simulazione Snake Track (Straight-Curve-Straight)..." << endl;
+    cout << "Simulazione Chicane START..." << endl;
 
     for(int i=0; i<steps; i++) {
         double t = i*dt;
 
         // --- MPC ---
-        auto horizon_mpc = get_local_horizon(s_mpc, track, 20);
-        
+        auto hor_mpc = get_horizon(s_mpc, track, op);
+        double v_ref_mpc = hor_mpc.second; 
+        Point current_ref = hor_mpc.first[0]; // Punto target attuale
+
         Eigen::VectorXd x0(6);
         x0 << s_mpc.x, s_mpc.y, s_mpc.theta, s_mpc.vx, s_mpc.vy, s_mpc.omega;
         mpc.updateDiscretization(x0, 0.0);
         
-        pair<double, double> u_mpc = mpc.compute(x0, horizon_mpc.first, horizon_mpc.second);
+        pair<double,double> u_mpc;
+        
+        // Protezione contro errori solver
+        try {
+            u_mpc = mpc.compute(x0, hor_mpc.first, v_ref_mpc);
+        } catch(...) {
+            cout << "CRASH MPC al tempo " << t << endl;
+            u_mpc = {0,0};
+        }
+
         s_mpc = update_vehicle_physics(s_mpc, u_mpc.first, u_mpc.second, dt);
 
         // --- PID ---
-        auto horizon_pid = get_local_horizon(s_pid, track, 20);
-        double v_target_pid = horizon_pid.second;
-
-        double steer_pp = pp.compute(s_pid, horizon_pid.first);
+        auto hor_pid = get_horizon(s_pid, track, op);
+        double v_ref_pid = hor_pid.second;
+        double steer_pid = pp.calc(s_pid, hor_pid.first);
         
         double fx_pid = 0;
-        double err_v = v_target_pid - s_pid.vx;
-        
-        if(err_v > 0.2) { // Deadzone piccola
-            fx_pid = pid_throttle.update(v_target_pid, s_pid.vx, dt);
-            pid_brake.reset();
-        } else if (err_v < -0.2) {
-            fx_pid = -pid_brake.update(-v_target_pid, -s_pid.vx, dt);
-            pid_throttle.reset();
+        double err = v_ref_pid - s_pid.vx;
+        if(err > 0.5) {
+            fx_pid = pid_gas.calc(v_ref_pid, s_pid.vx, dt);
+            pid_brk.reset();
+        } else if(err < -0.5) {
+            fx_pid = -pid_brk.calc(-v_ref_pid, -s_pid.vx, dt); 
+            pid_gas.reset();
         }
         
-        s_pid = update_vehicle_physics(s_pid, fx_pid, steer_pp, dt);
+        s_pid = update_vehicle_physics(s_pid, fx_pid, steer_pid, dt);
 
-        // --- LOGGING ---
-        // Calcolo LatErr approssimato (distanza Y dal centro pista nel tratto dritto o sinusoide)
-        // Questo è solo per il plot veloce
-        double ref_y_mpc = 0;
-        if(s_mpc.x > 100 && s_mpc.x < 200) ref_y_mpc = 4.0 * sin((s_mpc.x - 100.0) / 15.0);
-        double lat_err = s_mpc.y - ref_y_mpc;
+        // Log
+        f << t << "," << v_ref_mpc << ","
+          << current_ref.x << "," << current_ref.y << ","
+          << s_mpc.x << "," << s_mpc.y << "," << s_mpc.vx << "," << u_mpc.first << "," << u_mpc.second << ","
+          << s_pid.x << "," << s_pid.y << "," << s_pid.vx << "," << fx_pid << "," << (fx_pid*s_pid.vx) << "\n";
 
-        file << t << "," << horizon_mpc.second << ","
-             << s_mpc.x << "," << s_mpc.y << "," << s_mpc.vx << "," << u_mpc.first << "," << u_mpc.second << ","
-             << lat_err << "," 
-             << s_pid.x << "," << s_pid.y << "," << s_pid.vx << "," << fx_pid << "," << (fx_pid * s_pid.vx) << "\n";
-        
-        // Stop se finita pista
-        if(s_mpc.x > 300 && s_pid.x > 300) break;
+        if(s_mpc.x > 290) break;
     }
-
-    file.close();
-    cout << "Simulazione completata." << endl;
+    f.close();
+    cout << "Simulazione END. Dati in comparison_results.csv" << endl;
     return 0;
 }
