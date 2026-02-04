@@ -21,22 +21,24 @@ MPC::MPC() : solver_initialized(false) {
     la = 0.792; lb = 0.758; Iz = 98.03; m = 320; Ycm = 0.362;
     P_max = 30000.0; F_peak = 1500.0;
 
-    // --- 2. SETUP MATRICI PESI (TUNING FINALE) ---
+    // --- 2. SETUP MATRICI PESI (TUNING OTTIMIZZATO) ---
     Q = Eigen::MatrixXd::Zero(nx, nx);
 
-    // TUNING "CAVALLO DI BATTAGLIA":
-    // Y (laterale): 100 -> Precisione traiettoria (come piace a te)
-    // Theta: 50 -> Allineamento curve
-    // Vx: 200 -> (ALZATO) Priorità assoluta al tracking velocità (Figura 2)
-    Q.diagonal() << 20, 100, 50, 200, 10, 1; 
+    // ✅ TUNING MIGLIORATO (TESI-READY):
+    // X: 80 → Aumentato per ridurre "taglio curva" finale (250-300m)
+    // Y: 100 → Precisione laterale mantenuta
+    // Theta: 60 → Aumentato per allineamento in curva
+    // Vx: 250 → Tracking velocità prioritario
+    // Vy, Omega: Bassi per permettere derive controllate
+    Q.diagonal() << 80, 100, 60, 250, 10, 1; 
 
     R = Eigen::MatrixXd::Identity(nu, nu);
-    // Costo input basso per permettere uso aggressivo di gas e sterzo
-    R.diagonal() << 1e-4, 0.1; 
+    // Costo input ridotto per risposta aggressiva
+    R.diagonal() << 5e-5, 0.05; 
 
     R_delta = Eigen::MatrixXd::Identity(nu, nu); 
-    // Penalità variazione bassa: permettiamo scatti rapidi
-    R_delta.diagonal() << 1e-4, 1.0; 
+    // Penalità variazione: permette scatti rapidi ma evita chattering
+    R_delta.diagonal() << 1e-5, 0.8; 
 
     // --- 3. SETUP LIMITI ---
     umin = Eigen::VectorXd::Zero(nu);
@@ -147,29 +149,34 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         }
     }
 
-    // 4. Costruzione Vettore Riferimento (FIX ORIENTAMENTO E VELOCITÀ)
+    // 4. ✅ COSTRUZIONE RIFERIMENTO MIGLIORATA
     Eigen::VectorXd x_ref_big = Eigen::VectorXd::Zero(op * nx);
+    
+    // Calcolo theta_ref tramite media mobile (riduce rumore da waypoints ravvicinati)
     for (int i = 0; i < op; ++i) {
         int idx = std::min(i, (int)waypoints.size() - 1);
-        int idx_next = std::min(i + 1, (int)waypoints.size() - 1);
         
         x_ref_big(i * nx + IDX_X) = waypoints[idx].x;
         x_ref_big(i * nx + IDX_Y) = waypoints[idx].y;
         
-        double dx = waypoints[idx_next].x - waypoints[idx].x;
-        double dy = waypoints[idx_next].y - waypoints[idx].y;
+        // ✅ Theta smoothing: usa differenza tra punto i+5 e i-5 (se disponibili)
+        int idx_ahead = std::min(idx + 5, (int)waypoints.size() - 1);
+        int idx_behind = std::max(idx - 5, 0);
+        
+        double dx = waypoints[idx_ahead].x - waypoints[idx_behind].x;
+        double dy = waypoints[idx_ahead].y - waypoints[idx_behind].y;
         double ref_theta = 0.0;
         
-        if(sqrt(dx*dx + dy*dy) > 0.1) {
+        if(sqrt(dx*dx + dy*dy) > 0.5) {
             ref_theta = atan2(dy, dx);
         } else if (i > 0) {
             ref_theta = x_ref_big((i-1) * nx + IDX_THETA);
         } else {
-             ref_theta = x0(IDX_THETA);
+            ref_theta = x0(IDX_THETA);
         }
         
         x_ref_big(i * nx + IDX_THETA) = ref_theta;
-        x_ref_big(i * nx + IDX_VX) = v_ref; // Tracking aggressivo velocità
+        x_ref_big(i * nx + IDX_VX) = v_ref; 
     }
 
     // 5. QP Setup
@@ -208,9 +215,9 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         }
     }
 
-    // Vincoli Slew Rate (Larghi per evitare crash)
-    double max_dFx = 50000.0 * dt; 
-    double max_dDelta = 100.0 * dt; 
+    // Vincoli Slew Rate (Realistici per attuatori reali)
+    double max_dFx = 8000.0 * dt;      // ✅ 8kN/s (realistico per motori EV)
+    double max_dDelta = 50.0 * dt;     // ✅ 50 rad/s (realistico per sterzo EPS)
     
     A_total.block(oc*nu, 0, (oc-1)*nu, oc*nu) = D;
     for(int i=0; i < oc-1; i++) {
