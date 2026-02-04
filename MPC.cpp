@@ -4,43 +4,44 @@
 #include <iostream>
 #include <vector>
 
-// Header fondamentale per usare .exp() sulle matrici Eigen
+// Necessario per il calcolo dell'esponenziale di matrici (discretizzazione ZOH)
 #include <unsupported/Eigen/MatrixFunctions>
 
 using namespace std;
 
 MPC::MPC() : solver_initialized(false) {
-    // --- 1. INIZIALIZZAZIONE FORZATA VARIABILI ---
-    nx = 6;  // [X, Y, Theta, Vx, Vy, Omega]
-    nu = 2;  // [Fx, Delta]
-    op = 40; // Orizzonte Predizione
-    oc = 10; // Orizzonte Controllo
+    // Dimensioni problema
+    nx = 6;  // Stati: [X, Y, Theta, Vx, Vy, Omega]
+    nu = 2;  // Input: [Fx, Delta]
+    op = 40; // Orizzonte predizione (2 secondi a 50 Hz)
+    oc = 10; // Orizzonte controllo
     dt = 0.05; 
 
-    // Parametri Veicolo
-    la = 0.792; lb = 0.758; Iz = 98.03; m = 320; Ycm = 0.362;
-    P_max = 30000.0; F_peak = 1500.0;
+    // Parametri veicolo Firenze Race Team
+    la = 0.792; 
+    lb = 0.758; 
+    Iz = 98.03; 
+    m = 320; 
+    Ycm = 0.362;
+    P_max = 30000.0; // 30 kW per test
+    F_peak = 1500.0; 
 
-    // --- 2. SETUP MATRICI PESI (TUNING OTTIMIZZATO) ---
+    // Pesi funzione costo
     Q = Eigen::MatrixXd::Zero(nx, nx);
-
-    // ✅ TUNING MIGLIORATO (TESI-READY):
-    // X: 80 → Aumentato per ridurre "taglio curva" finale (250-300m)
-    // Y: 100 → Precisione laterale mantenuta
-    // Theta: 60 → Aumentato per allineamento in curva
-    // Vx: 250 → Tracking velocità prioritario
-    // Vy, Omega: Bassi per permettere derive controllate
+    // X=80, Y=100: tracking traiettoria bilanciato
+    // Vx=250: priorità massima su velocità
+    // Theta=60: allineamento importante in curva
     Q.diagonal() << 80, 100, 60, 250, 10, 1; 
 
     R = Eigen::MatrixXd::Identity(nu, nu);
-    // Costo input ridotto per risposta aggressiva
+    // Costo input basso per sfruttare attuatori
     R.diagonal() << 5e-5, 0.05; 
 
     R_delta = Eigen::MatrixXd::Identity(nu, nu); 
-    // Penalità variazione: permette scatti rapidi ma evita chattering
+    // Penalità variazioni per smoothness
     R_delta.diagonal() << 1e-5, 0.8; 
 
-    // --- 3. SETUP LIMITI ---
+    // Limiti attuatori
     umin = Eigen::VectorXd::Zero(nu);
     umax = Eigen::VectorXd::Zero(nu);
     
@@ -61,7 +62,7 @@ void MPC::updateDiscretization(const Eigen::VectorXd& x, double acc_y_measured) 
     B = Eigen::MatrixXd::Zero(nx, nu);
 
     double theta = x(IDX_THETA);
-    double vx = std::max(x(IDX_VX), 1.0); 
+    double vx = std::max(x(IDX_VX), 1.0); // Evita divisione per zero
     double vy = x(IDX_VY);
     double omega = x(IDX_OMEGA);
     double sin_th = sin(theta);
@@ -69,10 +70,10 @@ void MPC::updateDiscretization(const Eigen::VectorXd& x, double acc_y_measured) 
 
     double acc_x_est = 0.0; 
     std::pair<double, double> K_values = load_transfer(acc_x_est, numeri);
-    double Ka = K_values.first;  
-    double Kp = K_values.second; 
+    double Ka = K_values.first;  // Cornering stiffness anteriore
+    double Kp = K_values.second; // Cornering stiffness posteriore
 
-    // --- MATRICE A ---
+    // Costruzione matrice A (linearizzazione attorno allo stato corrente)
     A(IDX_X, IDX_THETA) = -vx * sin_th - vy * cos_th;
     A(IDX_X, IDX_VX)    = cos_th;
     A(IDX_X, IDX_VY)    = -sin_th;
@@ -83,9 +84,11 @@ void MPC::updateDiscretization(const Eigen::VectorXd& x, double acc_y_measured) 
 
     A(IDX_THETA, IDX_OMEGA) = 1.0;
 
+    // Dinamica longitudinale (accoppiamento centrifugo)
     A(IDX_VX, IDX_VY)    = -omega; 
     A(IDX_VX, IDX_OMEGA) = -vy;
 
+    // Dinamica laterale (dipende da rigidezza pneumatici e velocità)
     double den = m * vx;
     double C_vy = -(Ka + Kp) / den; 
     double C_omega = (Kp * lb - Ka * la) / den - vx; 
@@ -94,6 +97,7 @@ void MPC::updateDiscretization(const Eigen::VectorXd& x, double acc_y_measured) 
     A(IDX_VY, IDX_OMEGA) = C_omega;
     A(IDX_VY, IDX_VX)    = -omega; 
 
+    // Dinamica imbardata
     double den_rot = Iz * vx;
     double D_vy = (Kp * lb - Ka * la) / den_rot;
     double D_omega = -(Ka * la * la + Kp * lb * lb) / den_rot;
@@ -101,12 +105,12 @@ void MPC::updateDiscretization(const Eigen::VectorXd& x, double acc_y_measured) 
     A(IDX_OMEGA, IDX_VY)    = D_vy;
     A(IDX_OMEGA, IDX_OMEGA) = D_omega;
 
-    // --- MATRICE B ---
+    // Matrice B (controllo)
     B(IDX_VX, IDX_FX) = 1.0 / m;
     B(IDX_VY, IDX_DELTA)    = Ka / m;
     B(IDX_OMEGA, IDX_DELTA) = (Ka * la) / Iz;
 
-    // --- DISCRETIZZAZIONE ZOH ---
+    // Discretizzazione Zero-Order Hold
     Eigen::MatrixXd M(nx + nu, nx + nu);
     M.setZero();
     M.topLeftCorner(nx, nx) = A * dt;
@@ -118,12 +122,12 @@ void MPC::updateDiscretization(const Eigen::VectorXd& x, double acc_y_measured) 
 }
 
 std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<Point>& waypoints, double v_ref) {
-    // 1. Vincolo Potenza Dinamico
+    // Vincolo potenza (iperbolico linearizzato)
     double current_vx = std::max(x0(IDX_VX), 1.0);
     double max_force_power = P_max / current_vx;
     double current_fx_max = std::min(F_peak, max_force_power);
 
-    // 2. Matrici Blocchi
+    // Costruzione matrici blocco per QP
     Eigen::MatrixXd Q_blk = Eigen::MatrixXd::Zero(op * nx, op * nx);
     Eigen::MatrixXd R_blk = Eigen::MatrixXd::Zero(oc * nu, oc * nu);
     Eigen::MatrixXd Rd_blk = Eigen::MatrixXd::Zero((oc - 1) * nu, (oc - 1) * nu);
@@ -132,7 +136,7 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
     for (int i = 0; i < oc; ++i) R_blk.block(i * nu, i * nu, nu, nu) = R;
     for (int i = 0; i < oc - 1; ++i) Rd_blk.block(i * nu, i * nu, nu, nu) = R_delta;
 
-    // 3. Matrici Predittive
+    // Matrici predittive Sx, Su
     Eigen::MatrixXd Sx = Eigen::MatrixXd::Zero(op * nx, nx); 
     Eigen::MatrixXd Su = Eigen::MatrixXd::Zero(op * nx, oc * nu);
     Eigen::MatrixXd A_power = Eigen::MatrixXd::Identity(nx, nx);
@@ -149,17 +153,15 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         }
     }
 
-    // 4. ✅ COSTRUZIONE RIFERIMENTO MIGLIORATA
+    // Costruzione riferimento (con smoothing su theta)
     Eigen::VectorXd x_ref_big = Eigen::VectorXd::Zero(op * nx);
-    
-    // Calcolo theta_ref tramite media mobile (riduce rumore da waypoints ravvicinati)
     for (int i = 0; i < op; ++i) {
         int idx = std::min(i, (int)waypoints.size() - 1);
         
         x_ref_big(i * nx + IDX_X) = waypoints[idx].x;
         x_ref_big(i * nx + IDX_Y) = waypoints[idx].y;
         
-        // ✅ Theta smoothing: usa differenza tra punto i+5 e i-5 (se disponibili)
+        // Calcolo theta con media mobile per ridurre rumore
         int idx_ahead = std::min(idx + 5, (int)waypoints.size() - 1);
         int idx_behind = std::max(idx - 5, 0);
         
@@ -179,7 +181,7 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         x_ref_big(i * nx + IDX_VX) = v_ref; 
     }
 
-    // 5. QP Setup
+    // Setup QP
     Eigen::MatrixXd D = Eigen::MatrixXd::Zero((oc - 1) * nu, oc * nu);
     for (int i = 0; i < oc - 1; ++i) {
         D.block(i * nu, i * nu, nu, nu) = -Eigen::MatrixXd::Identity(nu, nu); 
@@ -193,13 +195,13 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
     slew_term.head(nu) = -u_prev.head(nu).transpose() * R_delta; 
     Eigen::VectorXd q = error_term + slew_term;
 
-    // 6. Vincoli (Safety Checks Inclusi)
+    // Vincoli
     int n_constraints = oc * nu + (oc - 1) * nu; 
     Eigen::MatrixXd A_total = Eigen::MatrixXd::Zero(n_constraints, oc * nu);
     Eigen::VectorXd lb_total = Eigen::VectorXd::Zero(n_constraints);
     Eigen::VectorXd ub_total = Eigen::VectorXd::Zero(n_constraints);
 
-    // Vincoli Input
+    // Vincoli su input
     A_total.topRows(oc * nu) = Eigen::MatrixXd::Identity(oc * nu, oc * nu);
     for(int i=0; i<oc; i++) {
         lb_total(i*nu + IDX_FX) = -current_fx_max; 
@@ -207,7 +209,7 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         lb_total(i*nu + IDX_DELTA) = umin[IDX_DELTA];
         ub_total(i*nu + IDX_DELTA) = umax[IDX_DELTA];
         
-        // Safety swap
+        // Safety check per evitare crash solver
         if (lb_total(i*nu + IDX_FX) > ub_total(i*nu + IDX_FX)) {
              double t = lb_total(i*nu + IDX_FX);
              lb_total(i*nu + IDX_FX) = ub_total(i*nu + IDX_FX);
@@ -215,9 +217,9 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
         }
     }
 
-    // Vincoli Slew Rate (Realistici per attuatori reali)
-    double max_dFx = 8000.0 * dt;      // ✅ 8kN/s (realistico per motori EV)
-    double max_dDelta = 50.0 * dt;     // ✅ 50 rad/s (realistico per sterzo EPS)
+    // Vincoli slew rate (limiti realistici per attuatori)
+    double max_dFx = 8000.0 * dt;      // 8 kN/s
+    double max_dDelta = 50.0 * dt;     // 50 rad/s
     
     A_total.block(oc*nu, 0, (oc-1)*nu, oc*nu) = D;
     for(int i=0; i < oc-1; i++) {
@@ -230,9 +232,8 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
     Eigen::SparseMatrix<double> H_s = H.sparseView();
     Eigen::SparseMatrix<double> A_s = A_total.sparseView();
 
-    // 7. Solver Lifecycle
+    // Inizializzazione/aggiornamento solver OSQP
     if (!solver_initialized) {
-        // CLEANUP CRUCIALE
         solver.data()->clearHessianMatrix();
         solver.data()->clearLinearConstraintsMatrix();
 

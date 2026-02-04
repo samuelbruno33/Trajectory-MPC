@@ -126,8 +126,14 @@ print(f"  MPC: {mpc_violations} steps")
 print(f"  PID: {pid_violations} steps ({pid_violation_time:.2f}s)")
 
 # Energia consumata
-mpc_energy = np.trapz(mpc_power_motor, df['Time']) / 1000
-pid_energy = np.trapz(pid_power_motor, df['Time']) / 1000
+try:
+    mpc_energy = np.trapezoid(mpc_power_motor, df['Time']) / 1000
+    pid_energy = np.trapezoid(pid_power_motor, df['Time']) / 1000
+except AttributeError:
+    # Fallback per vecchie versioni di numpy se necessario
+    mpc_energy = np.trapz(mpc_power_motor, df['Time']) / 1000
+    pid_energy = np.trapz(pid_power_motor, df['Time']) / 1000
+
 print(f"\nEnergia Consumata:")
 print(f"  MPC: {mpc_energy:.1f} kJ")
 print(f"  PID: {pid_energy:.1f} kJ")
