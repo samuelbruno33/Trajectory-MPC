@@ -1,3 +1,4 @@
 C:/Users/SamuelBruno/Documents/GitHub/Trajectory-MPC/build/CMakeFiles/test_mpc.dir
+C:/Users/SamuelBruno/Documents/GitHub/Trajectory-MPC/build/CMakeFiles/run_simulation.dir
 C:/Users/SamuelBruno/Documents/GitHub/Trajectory-MPC/build/CMakeFiles/ALL_BUILD.dir
 C:/Users/SamuelBruno/Documents/GitHub/Trajectory-MPC/build/CMakeFiles/ZERO_CHECK.dir

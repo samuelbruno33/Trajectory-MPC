@@ -45,7 +45,8 @@ class MPC {
         double Ycm = 0.362;
         
         // Parametri Powertrain EV
-        double P_max = 80000.0; // 80 kW
+        // double P_max = 80000.0; // 80 kW
+        double P_max = 30000.0; // 30 kW just for the test
         double F_peak = 1500.0; // 1500 N (limite grip/motore a bassa velocità)
 
         // Dimensioni Problema

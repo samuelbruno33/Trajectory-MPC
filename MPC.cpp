@@ -270,7 +270,7 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
     // 7. Solver Setup & Solve
     if (!solver_initialized) {
         solver.settings()->setWarmStart(true);
-        solver.settings()->setVerbosity(false); // Silenzioso per real-time
+        solver.settings()->setVerbosity(true); // Silenzioso per real-time, TODO: per test tenere a true, cambiare in RT
         
         solver.data()->setNumberOfVariables(oc * nu);
         solver.data()->setNumberOfConstraints(n_constraints);

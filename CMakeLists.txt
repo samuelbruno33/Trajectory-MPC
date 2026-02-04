@@ -24,3 +24,7 @@ target_link_libraries(test_mpc
     OsqpEigen::OsqpEigen
     Eigen3::Eigen
 )
+
+# Eseguibile per la simulazione
+add_executable(run_simulation simulation.cpp MPC.cpp)
+target_link_libraries(run_simulation OsqpEigen::OsqpEigen Eigen3::Eigen)
