@@ -39,35 +39,81 @@ This project relies on the following C++ libraries:
 * **OSQP**: For solving the quadratic programming (QP) optimization problem.
 * **osqp-eigen**: A C++ wrapper to interface Eigen with OSQP.
 
-### Installation (Windows Testing)
-Dependencies are managed via **vcpkg**. To set up the environment:
 
-1.  Clone vcpkg (if not already present):
+## Installation & Dependencies
+The project uses **vcpkg** for dependency management on Windows.
+
+1.  **Clone vcpkg:**
     ```powershell
     git clone [https://github.com/microsoft/vcpkg.git](https://github.com/microsoft/vcpkg.git)
     .\vcpkg\bootstrap-vcpkg.bat
     ```
-2.  Install libraries:
+2.  **Install Libraries:**
     ```powershell
     .\vcpkg\vcpkg install eigen3 osqp osqp-eigen
     ```
 
-## Build & Run
-To compile the standalone test on Windows using CMake:
+## How to Run the Simulation
+Follow these steps to reproduce the thesis results on Windows:
 
+### Step A: Build
 ```powershell
 mkdir build
 cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE=[PATH_TO_VCPKG]/scripts/buildsystems/vcpkg.cmake
 cmake --build .
+
 ```
 
-Run the test executable:
+### Step B: Run Simulation
+
+Ensure the file `cornering_stiffness_vs_vertical_load.txt` is present in the executable directory.
+
 ```powershell
-.\Debug\test_mpc.exe
+.\Debug\run_simulation.exe
+
 ```
+
+*This generates a `comparison_results.csv` file containing the telemetry of both controllers.*
+
+### Step C: Generate Plots
+
+Use the provided Python script to visualize the comparison:
+
+```powershell
+python conversion_thesis.py
+
+```
+
+*This generates `grafico_1_traiettoria.png`, `grafico_2_longitudinale.png` and `grafico_3_dinamica_longitudinale.png`.*
+
+## Experimental Results
+
+The following statistics were collected during a comparative test on the "Chicane" track scenario.
+
+### Performance Metrics (RMSE)
+
+The Coupled MPC demonstrates superior tracking capabilities compared to the PID+PP Baseline.
+
+| Metric | MPC (Coupled) | PID (Baseline) | Improvement |
+| --- | --- | --- | --- |
+| **Lateral Error (RMSE)** | **1.381 m** | 6.213 m | **+77.8%** 🟢 |
+| **Velocity Error (RMSE)** | **7.232 m/s** | 16.513 m/s | **+56.2%** 🟢 |
+
+### Power & Energy Analysis
+
+* **Energy Consumed:**
+* MPC: 187.8 kJ
+* PID: 153.7 kJ
+* *Note: The PID consumed less energy simply because it failed to reach the target speeds (high velocity error), whereas the MPC maximized performance.*
+
+
+* **Constraint Satisfaction:**
+* The MPC successfully managed the power limitation, saturating the actuator only when necessary to respect the  limit curve.
+* The PID baseline showed inability to anticipate the curve, resulting in massive tracking errors.
+
 
 ## Credits
 
-Based on the Bachelor's Thesis work by Federico Monetti (Lateral Control). Extended by Samuel Bruno (Longitudinal Control for EV).
-
+* **Federico Monetti:** Original Lateral MPC implementation.
+* **Samuel Bruno:** Coupled Longitudinal/Lateral formulation and EV Constraints.
