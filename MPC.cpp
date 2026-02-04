@@ -11,7 +11,7 @@ MPC::MPC() : solver_initialized(false) {
     // Q: Matrice dei pesi sugli stati [X, Y, Theta, Vx, Vy, Omega]
     Q = Eigen::MatrixXd::Zero(nx, nx);
     // Tuning preliminare
-    Q.diagonal() << 20, 20, 50, 50, 20, 1;
+    Q.diagonal() << 20, 20, 10, 80, 10, 1;
 
     // R: Matrice dei pesi sugli input [Fx, Delta]
     R = Eigen::MatrixXd::Identity(nu, nu);
@@ -23,7 +23,7 @@ MPC::MPC() : solver_initialized(false) {
     R_delta = Eigen::MatrixXd::Identity(nu, nu); 
     // - Delta Fx: peso basso
     // - Delta Sterzo: peso molto alto (100) per evitare oscillazioni/chattering
-    R_delta.diagonal() << 1e-3, 100.0; 
+    R_delta.diagonal() << 1e-4, 100.0; // Fx da 1e-3 a 1e-4
 
     // --- Definizione Limiti Hard (Costanti) ---
     umin = Eigen::VectorXd::Zero(nu);
@@ -182,17 +182,31 @@ std::pair<double, double> MPC::compute(const Eigen::VectorXd& x0, const vector<P
     // 4. Costruzione Vettore Riferimento (Trajectory & Speed Tracking)
     Eigen::VectorXd x_ref_big = Eigen::VectorXd::Zero(op * nx);
     for (int i = 0; i < op; ++i) {
+        // Trova l'indice corrente e il successivo per calcolare la direzione
         int idx = std::min(i, (int)waypoints.size() - 1);
+        int idx_next = std::min(i + 1, (int)waypoints.size() - 1);
 
-        x_ref_big(i * nx + IDX_X)  = waypoints[idx].x;
-        x_ref_big(i * nx + IDX_Y)  = waypoints[idx].y;
-        x_ref_big(i * nx + IDX_VX) = v_ref;
+        x_ref_big(i * nx + IDX_X) = waypoints[idx].x;
+        x_ref_big(i * nx + IDX_Y) = waypoints[idx].y;
 
-        if (idx < waypoints.size() - 1) {
-            double dx = waypoints[idx + 1].x - waypoints[idx].x;
-            double dy = waypoints[idx + 1].y - waypoints[idx].y;
-            x_ref_big(i * nx + IDX_THETA) = atan2(dy, dx);
+        // CALCOLO ANGOLO (Fix Fondamentale)
+        // Calcoliamo l'orientamento del tracciato usando l'arcotangente tra due punti
+        double dx = waypoints[idx_next].x - waypoints[idx].x;
+        double dy = waypoints[idx_next].y - waypoints[idx].y;
+        double ref_theta = 0.0;
+
+        // Se i punti sono distanti, calcola l'angolo. Altrimenti mantieni il precedente.
+        if (sqrt(dx*dx + dy*dy) > 0.1) {
+            ref_theta = atan2(dy, dx);
+        } else if (i > 0) {
+            ref_theta = x_ref_big((i - 1) * nx + IDX_THETA); // Mantieni angolo precedente
+        } else {
+            ref_theta = x0(IDX_THETA); // Fallback angolo iniziale
         }
+
+        x_ref_big(i * nx + IDX_THETA) = ref_theta; // Assegna l'angolo corretto
+        x_ref_big(i * nx + IDX_VX) = v_ref;        // Tracking Velocità
+        // Vy e Omega ref rimangono 0 per stabilità
     }
 
 
